@@ -664,23 +664,24 @@ async function listPrompt(page, index) {
 async function login(page) {
   console.log('Logging in to PromptBase...');
   await page.goto('https://promptbase.com/login', { waitUntil: 'networkidle', timeout: 30000 });
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
 
-  // Step 1: Enter email and click Continue
+  // Debug: log all visible text to help diagnose selector issues
+  const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 500));
+  console.log('Page text (first 500 chars):', bodyText);
+
+  // Step 1: Enter email and press Enter (works for Angular SPAs)
   await page.waitForSelector('input[type="email"]', { timeout: 15000 });
   await page.fill('input[type="email"]', EMAIL);
   await page.waitForTimeout(500);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(3000);
 
-  // Click the "Continue" button (PromptBase uses two-step login, no type="submit")
-  await page.click('button:has-text("Continue")');
-  await page.waitForTimeout(2000);
-
-  // Step 2: Wait for password field to appear, fill it, and continue
+  // Step 2: Wait for password field, fill it, press Enter
   await page.waitForSelector('input[type="password"]', { timeout: 15000 });
   await page.fill('input[type="password"]', PASSWORD);
   await page.waitForTimeout(500);
-
-  await page.click('button:has-text("Continue")');
+  await page.keyboard.press('Enter');
   await page.waitForURL('**/account**', { timeout: 30000 });
   console.log('✅ Logged in');
 }
