@@ -1,0 +1,49 @@
+name: PromptBase Auto-Lister
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_from:
+        description: 'Start from prompt # (0=first, 1=second, etc.)'
+        required: false
+        default: '0'
+
+jobs:
+  list-prompts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: automation
+        run: |
+          npm init -y
+          npm install playwright
+
+      - name: Install Playwright browsers
+        working-directory: automation
+        run: npx playwright install chromium --with-deps
+
+      - name: Run PromptBase lister
+        working-directory: automation
+        env:
+          PROMPTBASE_EMAIL: ${{ secrets.PROMPTBASE_EMAIL }}
+          PROMPTBASE_PASSWORD: ${{ secrets.PROMPTBASE_PASSWORD }}
+          START_FROM: ${{ github.event.inputs.start_from || '0' }}
+        run: node promptbase_lister.js
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: automation/*.png
+          retention-days: 7
