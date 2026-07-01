@@ -529,15 +529,15 @@ async function fillAngularInput(page, selector, value) {
 }
 
 // ─── Helper: robust click with freeze tolerance ────────────────────────────
-async function robustClick(page, selector, timeout = 90000) {
+async function robustClick(page, selector, timeout = 20000) {
   try {
     await page.click(selector, { timeout: 5000 });
   } catch {
     // CDP may freeze — wait and check if page advanced anyway
     console.log(`Click may have frozen on ${selector} — waiting for navigation...`);
-    await page.waitForTimeout(5000);
+    await page.waitForTimeout(3000);
   }
-  // Wait for network to settle
+  // Wait for network to settle (short timeout — SPAs rarely fully idle)
   try {
     await page.waitForLoadState('networkidle', { timeout });
   } catch {
@@ -554,6 +554,19 @@ async function listPrompt(page, index) {
   // Navigate to sell page to start a new listing
   await page.goto('https://promptbase.com/sell', { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(2000);
+
+  // PromptBase may resume an existing draft at Step 2 — detect and go back to Step 1
+  const draftAtStep2 = await page.$('textarea[placeholder*="Impressionist"]');
+  if (draftAtStep2) {
+    console.log('Detected existing draft resumed at Step 2 — clicking Back to reset to Step 1');
+    const backBtn = await page.$('button:has-text("Back")');
+    if (backBtn) {
+      await backBtn.click();
+      await page.waitForTimeout(2000);
+    }
+  }
+  const pageStep = await page.evaluate(() => document.body.innerText.slice(0, 100));
+  console.log('Step indicator:', pageStep.replace(/\n/g, ' ').slice(0, 80));
 
   // ── STEP 1: Basic info ──────────────────────────────────────────────────
   console.log('Filling Step 1...');
@@ -615,20 +628,43 @@ async function listPrompt(page, index) {
   await fillAngularTextarea(page, templateSel, prompt.template);
   await page.waitForTimeout(1000);
 
-  // Add 4 example outputs
+  // Add 4 example outputs — use index-based selection to avoid always filling textarea[0]
   for (let i = 0; i < prompt.examples.length; i++) {
-    console.log(`  Adding example ${i + 1}/4...`);
-    const exampleSel = 'textarea[placeholder*="output"], textarea[placeholder*="Paste your output"]';
-    await page.waitForSelector(exampleSel, { timeout: 10000 });
-    await fillAngularTextarea(page, exampleSel, prompt.examples[i]);
-    await page.waitForTimeout(500);
+    console.log(`  Adding example ${i + 1}/${prompt.examples.length}...`);
 
-    // Click "Add example +"
-    const addBtn = 'button:has-text("Add example"), [class*="add-example"]';
-    const addBtnEl = await page.$(addBtn);
+    // Wait for the i-th example textarea slot to exist
+    try {
+      await page.waitForFunction(
+        (count) => document.querySelectorAll('textarea[placeholder*="Paste your output"]').length >= count,
+        { timeout: 10000 },
+        i + 1
+      );
+    } catch (e) {
+      console.log(`  WARNING: expected ${i + 1} example textarea(s), got fewer — filling whatever is available`);
+    }
+
+    // Fill the i-th textarea by index (querySelector always returns first — must use evaluate)
+    const filled = await page.evaluate(({ idx, val }) => {
+      const textareas = Array.from(document.querySelectorAll('textarea[placeholder*="Paste your output"]'));
+      const el = textareas[idx];
+      if (!el) return false;
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      nativeSetter.call(el, val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.click();
+      return true;
+    }, { idx: i, val: prompt.examples[i] });
+    console.log(`  Example ${i + 1} fill: ${filled ? 'OK' : 'FAILED (textarea not found)'}`);
+    await page.waitForTimeout(800);
+
+    // Click "Add example +" to reveal next textarea slot
+    const addBtnEl = await page.$('button:has-text("Add example")');
     if (addBtnEl) {
       await addBtnEl.click();
       await page.waitForTimeout(800);
+    } else {
+      console.log(`  NOTE: "Add example +" button not found after example ${i + 1}`);
     }
   }
 
@@ -712,7 +748,7 @@ async function login(page) {
 
   const browser = await chromium.launch({
     headless: true,  // required for CI/server runs (no XServer)
-    slowMo: 100,     // slight delay so Angular can react
+    // No slowMo — Angular fills use evaluate() so slowMo doesn't help and wastes time
   });
 
   const context = await browser.newContext({
