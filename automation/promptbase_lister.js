@@ -780,9 +780,10 @@ async function login(page) {
 
     console.log('\n🎉 All prompts listed successfully!');
   } catch (err) {
-    console.error('Error:', err.message);
-    await page.screenshot({ path: 'error_state.png' });
+    console.error('FATAL ERROR:', err.message);
+    try { await page.screenshot({ path: 'error_state.png' }); } catch {}
     console.log('Screenshot saved to error_state.png');
+    process.exitCode = 1;
   } finally {
     await browser.close();
   }
