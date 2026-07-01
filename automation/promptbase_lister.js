@@ -726,11 +726,21 @@ async function login(page) {
   const afterEmail = await page.evaluate(() => document.body.innerText.slice(0, 300));
   console.log('After email Enter:', afterEmail);
 
-  // Step 2: Password
+  // Step 2: Password — wait for Angular to bind the form control before filling
   await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-  await page.fill('input[type="password"]', PASSWORD);
-  await page.waitForTimeout(500);
-  await page.keyboard.press('Enter');
+  await page.waitForTimeout(1500); // Angular needs time to initialize reactive form after password field appears
+  await fillAngularInput(page, 'input[type="password"]', PASSWORD);
+  await page.waitForTimeout(1000);
+
+  // Try clicking the Login button explicitly (more reliable than Enter on Angular forms)
+  const loginSubmitBtn = await page.$('button:has-text("Login"), button[type="submit"]');
+  if (loginSubmitBtn) {
+    await loginSubmitBtn.click();
+    console.log('Clicked Login submit button');
+  } else {
+    await page.keyboard.press('Enter');
+    console.log('Pressed Enter to submit (no Login button found)');
+  }
 
   // Wait until we navigate away from /login (flexible — handles any redirect)
   await page.waitForFunction(() => !window.location.href.includes('/login'), { timeout: 30000 });
