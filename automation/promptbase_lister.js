@@ -683,8 +683,8 @@ async function login(page) {
   }
 
   const browser = await chromium.launch({
-    headless: false, // set true for fully background/server runs
-    slowMo: 100,    // slight delay so Angular can react
+    headless: true,  // required for CI/server runs (no XServer)
+    slowMo: 100,     // slight delay so Angular can react
   });
 
   const context = await browser.newContext({
