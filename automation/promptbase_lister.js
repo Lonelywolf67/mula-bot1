@@ -666,24 +666,39 @@ async function login(page) {
   await page.goto('https://promptbase.com/login', { waitUntil: 'networkidle', timeout: 30000 });
   await page.waitForTimeout(3000);
 
-  // Debug: log all visible text to help diagnose selector issues
   const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 500));
   console.log('Page text (first 500 chars):', bodyText);
 
-  // Step 1: Enter email and press Enter (works for Angular SPAs)
+  // Page defaults to Create Account — switch to login mode
+  try {
+    await page.click('text=I already have an account', { timeout: 5000 });
+    console.log('Clicked "I already have an account"');
+    await page.waitForTimeout(2000);
+    const afterClick = await page.evaluate(() => document.body.innerText.slice(0, 300));
+    console.log('After switch to login:', afterClick);
+  } catch (e) {
+    console.log('No account-switch button found, proceeding as-is');
+  }
+
+  // Step 1: Email
   await page.waitForSelector('input[type="email"]', { timeout: 15000 });
   await page.fill('input[type="email"]', EMAIL);
   await page.waitForTimeout(500);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(3000);
 
-  // Step 2: Wait for password field, fill it, press Enter
+  const afterEmail = await page.evaluate(() => document.body.innerText.slice(0, 300));
+  console.log('After email Enter:', afterEmail);
+
+  // Step 2: Password
   await page.waitForSelector('input[type="password"]', { timeout: 15000 });
   await page.fill('input[type="password"]', PASSWORD);
   await page.waitForTimeout(500);
   await page.keyboard.press('Enter');
-  await page.waitForURL('**/account**', { timeout: 30000 });
-  console.log('✅ Logged in');
+
+  // Wait until we navigate away from /login (flexible — handles any redirect)
+  await page.waitForFunction(() => !window.location.href.includes('/login'), { timeout: 30000 });
+  console.log('✅ Logged in - URL:', page.url());
 }
 
 // ─── Entry point ───────────────────────────────────────────────────────────
