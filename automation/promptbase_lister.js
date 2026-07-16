@@ -699,52 +699,69 @@ async function listPrompt(page, index) {
 // ─── Login ─────────────────────────────────────────────────────────────────
 async function login(page) {
   console.log('Logging in to PromptBase...');
-  await page.goto('https://promptbase.com/login', { waitUntil: 'networkidle', timeout: 30000 });
+  await page.goto('https://promptbase.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(3000);
 
-  const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 500));
-  console.log('Page text (first 500 chars):', bodyText);
+  const bodyText = await page.evaluate(() => document.body.innerText.slice(0, 200));
+  console.log('Initial page text:', bodyText.replace(/\n/g, ' ').slice(0, 150));
 
   // Page defaults to Create Account — switch to login mode
   try {
     await page.click('text=I already have an account', { timeout: 5000 });
     console.log('Clicked "I already have an account"');
     await page.waitForTimeout(2000);
-    const afterClick = await page.evaluate(() => document.body.innerText.slice(0, 300));
-    console.log('After switch to login:', afterClick);
   } catch (e) {
     console.log('No account-switch button found, proceeding as-is');
   }
 
-  // Step 1: Email
+  // Step 1: Email — use type() which fires real keyboard events Angular understands
   await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-  await page.fill('input[type="email"]', EMAIL);
+  await page.click('input[type="email"]');
+  await page.type('input[type="email"]', EMAIL, { delay: 50 });
   await page.waitForTimeout(500);
+  console.log('Email typed, pressing Enter...');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(3000);
 
-  const afterEmail = await page.evaluate(() => document.body.innerText.slice(0, 300));
-  console.log('After email Enter:', afterEmail);
+  const afterEmail = await page.evaluate(() => document.body.innerText.slice(0, 200));
+  console.log('After email:', afterEmail.replace(/\n/g, ' ').slice(0, 150));
 
-  // Step 2: Password — wait for Angular to bind the form control before filling
+  // Step 2: Password — use type() for real keyboard events, give Angular time to bind
   await page.waitForSelector('input[type="password"]', { timeout: 15000 });
-  await page.waitForTimeout(1500); // Angular needs time to initialize reactive form after password field appears
-  await fillAngularInput(page, 'input[type="password"]', PASSWORD);
+  await page.waitForTimeout(1500);
+  await page.click('input[type="password"]');
+  await page.type('input[type="password"]', PASSWORD, { delay: 50 });
   await page.waitForTimeout(1000);
 
-  // Try clicking the Login button explicitly (more reliable than Enter on Angular forms)
-  const loginSubmitBtn = await page.$('button:has-text("Login"), button[type="submit"]');
-  if (loginSubmitBtn) {
-    await loginSubmitBtn.click();
-    console.log('Clicked Login submit button');
+  // Log button state before clicking
+  const btnInfo = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    return btns.map(b => `[${b.type}] "${b.textContent.trim().slice(0,20)}" disabled=${b.disabled}`).join(' | ');
+  });
+  console.log('Buttons on page:', btnInfo.slice(0, 300));
+
+  // Try submit button with force (bypasses disabled check), fall back to Enter
+  const submitLocator = page.locator('button[type="submit"]').first();
+  const submitCount = await submitLocator.count();
+  if (submitCount > 0) {
+    await submitLocator.click({ force: true });
+    console.log('Clicked submit button (force)');
   } else {
     await page.keyboard.press('Enter');
-    console.log('Pressed Enter to submit (no Login button found)');
+    console.log('No submit button found, pressed Enter');
   }
 
-  // Wait until we navigate away from /login (flexible — handles any redirect)
-  await page.waitForFunction(() => !window.location.href.includes('/login'), { timeout: 30000 });
-  console.log('✅ Logged in - URL:', page.url());
+  // Wait for navigation away from /login
+  try {
+    await page.waitForFunction(() => !window.location.href.includes('/login'), { timeout: 30000 });
+    console.log('✅ Logged in - URL:', page.url());
+  } catch (e) {
+    const finalUrl = page.url();
+    const finalText = await page.evaluate(() => document.body.innerText.slice(0, 400));
+    console.log('Login failed. URL:', finalUrl);
+    console.log('Page state:', finalText.replace(/\n/g, ' ').slice(0, 300));
+    throw new Error(`Login timeout - URL still contains /login. See above for page state.`);
+  }
 }
 
 // ─── Entry point ───────────────────────────────────────────────────────────
