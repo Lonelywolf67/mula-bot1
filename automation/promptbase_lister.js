@@ -733,22 +733,44 @@ async function login(page) {
   await page.type('input[type="password"]', PASSWORD, { delay: 50 });
   await page.waitForTimeout(1000);
 
-  // Log button state before clicking
-  const btnInfo = await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    return btns.map(b => `[${b.type}] "${b.textContent.trim().slice(0,20)}" disabled=${b.disabled}`).join(' | ');
+  // Log all interactive elements to debug what's available
+  const allClickable = await page.evaluate(() => {
+    const els = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a'));
+    return els.map(el => `[${el.tagName}/${el.getAttribute('type')||el.getAttribute('role')||''}] "${el.textContent.trim().slice(0,30)}"`).join(' | ');
   });
-  console.log('Buttons on page:', btnInfo.slice(0, 300));
+  console.log('Clickable elements:', allClickable.slice(0, 600));
 
-  // Try submit button with force (bypasses disabled check), fall back to Enter
-  const submitLocator = page.locator('button[type="submit"]').first();
-  const submitCount = await submitLocator.count();
+  // Multi-strategy submit: button[type=submit] → text elements → focus+Enter
+  let submitted = false;
+
+  // Strategy 1: standard submit button (force to bypass disabled)
+  const submitCount = await page.locator('button[type="submit"]').count();
   if (submitCount > 0) {
-    await submitLocator.click({ force: true });
+    await page.locator('button[type="submit"]').first().click({ force: true });
     console.log('Clicked submit button (force)');
-  } else {
+    submitted = true;
+  }
+
+  // Strategy 2: click text-based login trigger (PromptBase uses non-button elements)
+  if (!submitted) {
+    for (const txt of ['Login', 'Log in', 'Sign in', 'Continue']) {
+      try {
+        const loc = page.locator(`text="${txt}"`).first();
+        if (await loc.count() > 0) {
+          await loc.click({ force: true, timeout: 3000 });
+          console.log(`Clicked "${txt}" text element`);
+          submitted = true;
+          break;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Strategy 3: ensure focus on password field and press Enter
+  if (!submitted) {
+    await page.focus('input[type="password"]');
     await page.keyboard.press('Enter');
-    console.log('No submit button found, pressed Enter');
+    console.log('Pressed Enter from password field focus');
   }
 
   // Wait for navigation away from /login
