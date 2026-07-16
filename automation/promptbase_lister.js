@@ -733,14 +733,14 @@ async function login(page) {
   await page.type('input[type="password"]', PASSWORD, { delay: 50 });
   await page.waitForTimeout(1000);
 
-  // Log all interactive elements to debug what's available
+  // Log all elements to debug what's on the page
   const allClickable = await page.evaluate(() => {
-    const els = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a'));
+    const els = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a, div[tabindex], span[tabindex]'));
     return els.map(el => `[${el.tagName}/${el.getAttribute('type')||el.getAttribute('role')||''}] "${el.textContent.trim().slice(0,30)}"`).join(' | ');
   });
-  console.log('Clickable elements:', allClickable.slice(0, 600));
+  console.log('Clickable elements:', allClickable.slice(0, 800));
 
-  // Multi-strategy submit: button[type=submit] → text elements → focus+Enter
+  // Multi-strategy submit
   let submitted = false;
 
   // Strategy 1: standard submit button (force to bypass disabled)
@@ -751,26 +751,76 @@ async function login(page) {
     submitted = true;
   }
 
-  // Strategy 2: click text-based login trigger (PromptBase uses non-button elements)
+  // Strategy 2: focus password field and press Enter (catches standard Angular forms)
   if (!submitted) {
-    for (const txt of ['Login', 'Log in', 'Sign in', 'Continue']) {
-      try {
-        const loc = page.locator(`text="${txt}"`).first();
-        if (await loc.count() > 0) {
-          await loc.click({ force: true, timeout: 3000 });
-          console.log(`Clicked "${txt}" text element`);
-          submitted = true;
-          break;
-        }
-      } catch (_) {}
+    console.log('No submit button found — focusing password field and pressing Enter...');
+    await page.focus('input[type="password"]');
+    await page.waitForTimeout(500);
+    await page.keyboard.press('Enter');
+    console.log('Pressed Enter from focused password field');
+    await page.waitForTimeout(3000);
+    if (!page.url().includes('/login')) {
+      submitted = true;
+      console.log('Strategy 2 success - navigated away from login');
     }
   }
 
-  // Strategy 3: ensure focus on password field and press Enter
+  // Strategy 3: Tab from password field to submit button, then press Enter
   if (!submitted) {
+    console.log('Strategy 2 failed — trying Tab to submit...');
     await page.focus('input[type="password"]');
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(500);
+    const focusedEl = await page.evaluate(() => {
+      const el = document.activeElement;
+      return el ? `[${el.tagName}] "${el.textContent.trim().slice(0,30)}"` : 'none';
+    });
+    console.log('Focused after Tab:', focusedEl);
     await page.keyboard.press('Enter');
-    console.log('Pressed Enter from password field focus');
+    console.log('Pressed Enter on focused element after Tab');
+    await page.waitForTimeout(3000);
+    if (!page.url().includes('/login')) {
+      submitted = true;
+      console.log('Strategy 3 success - navigated away from login');
+    }
+  }
+
+  // Strategy 4: evaluate-based click — find NON-ANCHOR login triggers
+  if (!submitted) {
+    console.log('Strategy 3 failed — trying evaluate-based click on non-anchor login trigger...');
+    const evalResult = await page.evaluate(() => {
+      // Walk all visible elements, skip <a> tags (those are nav links)
+      const skipTags = new Set(['A', 'NAV', 'SCRIPT', 'STYLE', 'HEAD', 'HTML', 'BODY']);
+      const loginTexts = new Set(['Login', 'Log in', 'Sign in', 'Continue', 'Submit']);
+      function walk(el) {
+        if (!el || skipTags.has(el.tagName)) return null;
+        // Check this element's own text (not children)
+        const own = Array.from(el.childNodes)
+          .filter(n => n.nodeType === 3)
+          .map(n => n.textContent.trim())
+          .join('').trim();
+        if (loginTexts.has(own) && el.offsetParent !== null) {
+          el.click();
+          return `Clicked [${el.tagName}] "${own}"`;
+        }
+        for (const child of el.children) {
+          const r = walk(child);
+          if (r) return r;
+        }
+        return null;
+      }
+      return walk(document.body) || 'No non-anchor login trigger found';
+    });
+    console.log('Evaluate click result:', evalResult);
+    await page.waitForTimeout(3000);
+    if (!page.url().includes('/login')) {
+      submitted = true;
+      console.log('Strategy 4 success');
+    }
+  }
+
+  if (!submitted) {
+    console.log('All submit strategies failed — will check final page state below');
   }
 
   // Wait for navigation away from /login
